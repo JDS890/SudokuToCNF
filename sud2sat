@@ -1,0 +1,209 @@
+#!/usr/bin/env python3
+
+# CSC 322 Project 1
+# Joshua Stein
+# V00951354
+
+import sys
+import re
+
+SUDOKU_FILE_FORMAT = re.compile(r'(\s*(0|\.|\*|\?|[1-9])){81}')
+CNF_ENCODING = {
+    'MINIMAL':      1,
+    'EFFICIENT':    2,
+    'EXTENDED':     3,
+}
+
+def main():
+    # If encoding type is specified on command line, call sud2sat1, sud2sat1, or sud2sat1, respectively.
+    if len(sys.argv) == 2 and sys.argv[1].upper() in CNF_ENCODING:
+        encoding = sys.argv[1].upper()
+        if encoding == 'MINIMAL':       sud2sat1()
+        elif encoding == 'EFFICIENT':   sud2sat2()
+        elif encoding == 'EXTENDED':    sud2sat3()
+    elif len(sys.argv) > 1:
+        print("Usage: ./sud2sat ( | MINIMAL | EFFICIENT | EXTENDED)", file=sys.stderr)
+        exit(1)
+    
+    else:
+        # Uncomment exactly one of the 4 lines below
+        sud2sat()
+        # sud2sat1()
+        # sud2sat2()
+        # sud2sat3()
+
+
+def sud2sat():
+    transform_sud_to_sat(CNF_ENCODING['MINIMAL'])
+
+def sud2sat1():
+    transform_sud_to_sat(CNF_ENCODING['MINIMAL'])
+
+def sud2sat2():
+    transform_sud_to_sat(CNF_ENCODING['EFFICIENT'])
+
+def sud2sat3():
+    transform_sud_to_sat(CNF_ENCODING['EXTENDED'])
+
+
+
+def print_sudoku(sud, file=sys.stdout):
+    for row in sud: print('| ', '  '.join(map(str, row)), ' |', file=file, flush=True)
+
+
+
+def transform_sud_to_sat(encoding=CNF_ENCODING['MINIMAL']):
+    sud_m = SUDOKU_FILE_FORMAT.match(sys.stdin.read())
+    if not sud_m:
+        print("Invalid sudoku format", file=sys.stderr)
+        exit(1)
+    
+    sud_uniform = re.sub(r'\.|\*|\?', '0', sud_m.group())
+    sud_dense = re.sub(r'\s', '', sud_uniform)
+    sud = [['' if c.isspace() else int(c) for c in sud_dense[i: i+9]] for i in range(0, 81, 9)]
+
+    # Return variable truth value
+    truth = lambda i, j, k : sud[i][j] == k + 1
+
+    # Return variable number encoding
+    n = lambda i, j, k : 81*i + 9*j + k + 1
+    n2 = lambda i, j : 81*i + 9*j + sud[i][j]
+
+    # Return whether variable is free / has an undetermined truth value
+    free = lambda i, j : not sud[i][j]
+    
+    def ijk(num):
+        num -= 1
+        i = num // 81
+        num -= i * 81
+        j = num // 9
+        return i, j, num - 9*j
+    
+    
+    def conjunct_force_not_same(i1, j1, k1, i2, j2, k2):
+        """
+        Create a conjunct to force two cels to contain different numbers.
+        """
+        var_A_free = free(i1,j1)
+        var_B_free = free(i2,j2)
+
+        # If both variables are free, return list of 2 disjuncts
+        if var_A_free and var_B_free: return [-n(i1,j1,k1), -n(i2,j2,k2)]
+
+        # If only variable A is free, check the truth value of variable B
+        if var_A_free: return [-n(i1,j1,k1)] if truth(i2,j2,k2) else None
+
+        # If only variable B is free, check the truth value of variable A
+        if var_B_free: return [-n(i2,j2,k2)] if truth(i1,j1,k1) else None
+
+        # If both variables are chosen, at least one variable better have a false truth value...
+        if not (truth(i1,j1,k1) and truth(i2,j2,k2)): return None
+        print(f"Error: cels ({i1}, {j1}) and ({i2}, {j2}) are determined and are both {k1} (k1 == k2 = {k1 == k2})!", file=sys.stderr)
+        print_sudoku(sud, file=sys.stderr)
+        exit(1)
+    
+    def conjunct_force_in_row(i, k):
+        """
+        Create a conjunct to force a row to contain a number.
+        """
+        disjuncts = []
+        for j in range(9):
+            if free(i,j): disjuncts.append(n(i,j,k))
+            elif truth(i,j,k): return None
+        if not disjuncts:
+            print(f"Error: row {i} is determined and does not include number {k+1}!", file=sys.stderr)
+            print_sudoku(sud, file=sys.stderr)
+            exit(1)
+        return disjuncts
+    
+    def conjunct_force_in_col(j, k):
+        """
+        Create a conjunct to force a column to contain a number.
+        """
+        disjuncts = []
+        for i in range(9):
+            if free(i,j): disjuncts.append(n(i,j,k))
+            elif truth(i,j,k): return None
+        if not disjuncts:
+            print(f"Error: column {j} is determined and does not include number {k+1}!", file=sys.stderr)
+            print_sudoku(sud, file=sys.stderr)
+            exit(1)
+        return disjuncts
+    
+    def conjunct_force_in_subcell(k, a, b):
+        """
+        Create a conjunct to force a sub-cell to contain a number.
+        """
+        disjuncts = []
+        for u in range(3):
+            for v in range(3):
+                i = 3*a + u
+                j = 3*b + v
+                if free(i,j): disjuncts.append(n(i,j,k))
+                elif truth(i,j,k): return None
+        if not disjuncts:
+            print(f"Error: sub-cell ({a}, {b}) is determined and does contain number {k+1}!", file=sys.stderr)
+            print_sudoku(sud, file=sys.stderr)
+            exit(1)
+        return disjuncts
+    
+
+    # Each function below generates a list of conjuncts that enforce some specific rule
+    # A conjunct is a non-empty list of non-zero integers
+    
+    # Every determined cell maintains its number
+    conj_determined = lambda: [[n2(i, j)] for i in range(9) for j in range(9) if not free(i,j)]
+    
+    # Every cell contains at least one number
+    conj_min1 = lambda: [[n(i,j,k) for k in range(9)] for i in range(9) for j in range(9) if free(i,j)]
+
+    # Each number appears at most once in every row
+    conj_min2 = lambda: [conj for i in range(9) for k in range(9) for j in range(8) for l in range(j+1, 9) if (conj := conjunct_force_not_same(i,j,k, i,l,k)) ]
+    
+    # Each number appears at most once in every column
+    conj_min3 = lambda: [conj for j in range(9) for k in range(9) for i in range(8) for l in range(i+1, 9) if (conj := conjunct_force_not_same(i,j,k, l,j,k))]
+    
+    # Each number appear at most once in every 3x3 sub-grid
+    conj_min4 = lambda: [conj for k in range(9) for a in range(3) for b in range(3) for u in range(3) for v in range(2) for w in range(v+1, 3) if (conj := conjunct_force_not_same(3*a + u, 3*b + v, k,  3*a + u, 3*b + w, k))]
+    conj_min5 = lambda: [conj for k in range(9) for a in range(3) for b in range(3) for u in range(2) for v in range(3) for w in range(u+1, 3) for t in range(3) if (conj := conjunct_force_not_same(3*a + u, 3*b + v, k,  3*a + w, 3*b + t, k))]
+
+    # There is at most one number in each cell
+    conj_ext1 = lambda: [conj for i in range(9) for j in range(9) for k in range(8) for l in range(k+1, 9) if (conj := conjunct_force_not_same(i,j,k, i,j,l))]
+
+    # Every number appears at least once in each row
+    conj_ext2 = lambda: [conj for i in range(9) for k in range(9) if (conj := conjunct_force_in_row(i,k))]
+
+    # Every number appears at least once in each column
+    conj_ext3 = lambda: [conj for j in range(9) for k in range(9) if (conj := conjunct_force_in_col(j,k))]
+    
+    # Every number appears at least once in each sub-grid
+    conj_ext4 = lambda: [conj for k in range(9) for a in range(3) for b in range(3) if (conj := conjunct_force_in_subcell(k,a,b))]
+    
+
+
+    conjunct_lists = [
+        conj_determined(),
+        conj_min1(),
+        conj_min2(),
+        conj_min3(),
+        conj_min4(),
+        conj_min5()
+    ]
+    if encoding >= CNF_ENCODING['EFFICIENT']: conjunct_lists.append(conj_ext1())
+    if encoding >= CNF_ENCODING['EXTENDED']: conjunct_lists.extend([conj_ext2(), conj_ext3(), conj_ext4()])
+
+    # Variable appears in some non-trivial conjunct iff variable corresponds to free cell
+    num_variables = (81 - len(conjunct_lists[0])) * 9 + len(conjunct_lists[0])
+
+    num_conjuncts = 0
+    for conjunct_list in conjunct_lists: num_conjuncts += len(conjunct_list)
+
+    # Write to stdout
+    sys.stdout.write(f"p cnf {num_variables} {num_conjuncts}\n")
+    for conjunct_list in conjunct_lists:
+        for conjunct in conjunct_list:
+            sys.stdout.write(f"{' '.join(map(str, conjunct))} 0\n")
+
+
+if __name__ == '__main__':
+    main()

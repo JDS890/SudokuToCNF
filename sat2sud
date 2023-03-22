@@ -1,0 +1,47 @@
+#!/usr/bin/env python3
+
+# CSC 322 Project 1
+# Joshua Stein
+# V00951354
+
+import sys
+
+def main():
+    create_sud_from_vars()
+
+def create_sud_from_vars():
+    first_line = sys.stdin.readline()
+    if first_line.startswith('UNSAT'): exit(1)
+    if not first_line.startswith('SAT'):
+        print("Error: could not read variable assignment", file=sys.stderr)
+        exit(1)
+    
+    valuation = sys.stdin.readline().split()
+
+    def ijk(n):
+        """
+        Convert variable n to i, j, k components, where each component is 0-indexed
+        """
+        n -= 1
+        i = n // 81
+        n -= i * 81
+        j = n // 9
+        return i, j, n - 9*j
+    
+    # Create empty sudoku
+    sud = [[0 for j in range(9)] for i in range(9)]
+
+    # Fill sudoku cells
+    for var_truth_value in valuation:
+        n = int(var_truth_value)
+        if n <= 0: continue
+        i, j, k = ijk(n)
+        sud[i][j] = k + 1
+    
+    # Print sudoku
+    for row in sud:
+        print(f"{row[0]}{row[1]}{row[2]} {row[3]}{row[4]}{row[5]} {row[6]}{row[7]}{row[8]}") 
+
+
+if __name__ == '__main__':
+    main()
